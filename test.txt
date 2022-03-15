@@ -1,7 +1,4 @@
-123
-123 dsf
-asfoiwoie  
-$
-   12 " "" \
-    34" 12 $ffFF90 $ %
-def
+'1' '12'
+'\'' '\n' '\\'
+'\042f' as z for forw wfor za az
+forward9d forward

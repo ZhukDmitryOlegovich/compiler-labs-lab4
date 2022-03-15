@@ -5,9 +5,9 @@ use std::vec::Vec;
 #[derive(Debug)]
 enum TokenType {
     Spaces(String),
-    String(String),
+    Symbol(char),
     Identifier(String),
-    Number(i64),
+    Key(String),
     Error(char),
     SimpleError,
     End,
@@ -27,6 +27,13 @@ struct SmartIterator {
     prev_pos: (usize, usize),
     pos: (usize, usize),
     ind: usize,
+}
+
+#[derive(Debug)]
+struct Position{
+    ind: usize, 
+    pos: (usize, usize), 
+    prev_pos: (usize, usize),
 }
 
 impl SmartIterator {
@@ -64,9 +71,23 @@ impl SmartIterator {
             None
         }
     }
+
+    fn save_pos(&self) -> Position {
+        Position{ind: self.ind, pos: self.pos, prev_pos: self.prev_pos}
+    }
+
+    fn load_pos(&mut self, a: Position) {
+        self.ind = a.ind;
+        self.pos = a.pos;
+        self.prev_pos = a.prev_pos;
+    }
 }
 
 struct ParseToken(SmartIterator);
+
+fn to_digit_16(d: char) -> Option<u32> {
+    d.to_digit(16)
+}
 
 impl ParseToken {
     fn next_spaces(&mut self) -> TokenType {
@@ -78,32 +99,34 @@ impl ParseToken {
         TokenType::Spaces(ans)
     }
 
-    fn next_string(&mut self) -> TokenType {
-        if Some('"') == self.0.next() {
-            let mut ans = String::new();
-            if loop {
-                match self.0.next() {
-                    Some('"') => {
-                        if Some('"') == self.0.see() {
-                            ans.push('"');
-                            self.0.next();
-                        } else {
-                            break true;
-                        };
-                    }
-                    Some('\\') => {
-                        if Some('\n') == self.0.see() {
-                            ans.push('\n');
-                            self.0.next();
-                        } else {
-                            ans.push('\\');
-                        }
-                    }
-                    Some('\n') | None => break false,
-                    Some(x) => ans.push(x),
-                }
+    fn next_number16_4(&mut self, x: char) -> Option<char> {
+        to_digit_16(x)
+            .zip(self.0.next().and_then(to_digit_16))
+            .zip(self.0.next().and_then(to_digit_16))
+            .zip(self.0.next().and_then(to_digit_16))
+            .and_then(|(((x1, x2), x3), x4)| {
+                char::from_u32(((x1 * 16 + x2) * 16 + x3) * 16 + x4)
+            })
+    }
+
+    fn next_symbol(&mut self) -> TokenType {
+        if Some('\'') == self.0.next() {
+            if let Some(ans) = match self.0.next() {
+                Some('\'') => None,
+                Some('\n') => None,
+                Some('\\') => match self.0.next() {
+                    Some('n') => Some('\n'),
+                    Some(x @ ('\'' | '\\')) => Some(x),
+                    Some(x1) => self.next_number16_4(x1),
+                    _ => None,
+                },
+                x @ _ => x,
             } {
-                TokenType::String(ans)
+                if Some('\'') == self.0.next() {
+                    TokenType::Symbol(ans)
+                } else {
+                    TokenType::SimpleError
+                }
             } else {
                 TokenType::SimpleError
             }
@@ -112,57 +135,37 @@ impl ParseToken {
         }
     }
 
-    fn next_number10(&mut self) -> TokenType {
-        let mut ans = 0;
-        TokenType::Number(loop {
-            match self.0.see() {
-                Some(x) if x.is_digit(10) => {
-                    ans = ans * 10 + x.to_digit(10).unwrap() as i64;
-                    self.0.next();
-                }
-                _ => break ans,
-            }
-        })
-    }
-
-    fn next_number16(&mut self) -> TokenType {
-        if Some('$') == self.0.next() {
-            let mut ans = 0;
-            let mut is_empty = true;
-            loop {
-                match self.0.see() {
-                    Some(x) if x.is_digit(16) => {
-                        is_empty = false;
-                        ans = ans * 16 + x.to_digit(16).unwrap() as i64;
-                        self.0.next();
-                    }
-                    _ => break,
-                }
-            }
-            if is_empty {
-                TokenType::SimpleError
-            } else {
-                TokenType::Number(ans)
-            }
-        } else {
-            TokenType::SimpleError
-        }
-    }
-
-    fn next_identifier(&mut self) -> TokenType {
+    fn next_identifier_or_key(&mut self) -> TokenType {
         if let Some(x) = self.0.next() {
             if x.is_alphabetic() {
                 let mut ans = String::from(x);
+                let mut last_true_save = Some((self.0.save_pos(), ans.clone()));
                 loop {
                     match self.0.see() {
-                        Some(x) if x.is_alphabetic() || x.is_digit(10) || x == '$' => {
+                        Some(x) if x.is_alphabetic() || x.is_digit(10) => {
                             ans.push(x);
                             self.0.next();
+                            if x.is_alphabetic() {
+                                last_true_save = Some((self.0.save_pos(), ans.clone()))
+                            }
                         }
                         _ => break,
                     }
+                    if ans.len() == 10 {
+                        break;
+                    }
                 }
-                TokenType::Identifier(ans)
+                match last_true_save {
+                    Some((save, ans)) if ans.eq("z") || ans.eq("for") || ans.eq("forward") => {
+                        self.0.load_pos(save);
+                        TokenType::Key(ans)
+                    },
+                    Some((save, ans)) if ans.len() >= 2 => {
+                        self.0.load_pos(save);
+                        TokenType::Identifier(ans)
+                    },
+                    _ => TokenType::SimpleError,
+                }
             } else {
                 TokenType::SimpleError
             }
@@ -177,39 +180,35 @@ impl std::iter::Iterator for ParseToken {
 
     fn next(&mut self) -> Option<Token> {
         if let Some(l) = self.0.see() {
-            let st_ind = self.0.ind;
-            let from = self.0.pos;
+            let save = self.0.save_pos();
             let token = match l {
                 ' ' | '\t' | '\n' => self.next_spaces(),
-                '"' => self.next_string(),
-                x if x.is_digit(10) => self.next_number10(),
-                '$' => self.next_number16(),
-                x if x.is_alphabetic() => self.next_identifier(),
+                '\'' => self.next_symbol(),
+                x if x.is_alphabetic() => self.next_identifier_or_key(),
                 _ => TokenType::SimpleError,
             };
             match token {
                 TokenType::SimpleError => {
-                    self.0.ind = st_ind;
-                    self.0.pos = from;
+                    self.0.load_pos(save);
                     if env::var("SKIP_ERRORS").is_ok() {
                         self.0.next();
                         self.next()
                     } else {
                         Some(Token {
-                            from,
+                            from: self.0.pos,
                             value: TokenType::Error(self.0.next().unwrap()),
-                            to: from,
+                            to: self.0.pos,
                         })
                     }
                 }
                 TokenType::Spaces(_) if !env::var("NEED_SPACES").is_ok() => self.next(),
                 _ => Some(Token {
-                    from,
+                    from: save.pos,
                     value: token,
                     to: self.0.prev_pos,
                 }),
             }
-        } else if self.0.ind == self.0.arr.len() && !env::var("SKIP_EOF").is_ok() {
+        } else if !env::var("SKIP_EOF").is_ok() {
             self.0.ind += 1;
             Some(Token {
                 from: self.0.pos,
@@ -233,11 +232,12 @@ fn main() {
     println!();
 
     for x in ParseToken(SmartIterator::new(content)) {
+        let is_eof = matches!(x.value, TokenType::End);
         let (name, val) = match x.value {
             TokenType::Spaces(sp) => ("SPA".white(), format!("{:?}", sp).white()),
-            TokenType::String(str) => ("STR".green(), format!("{:?}", str).green()),
+            TokenType::Symbol(str) => ("SYM".green(), format!("{:?}", str).green()),
             TokenType::Identifier(id) => ("IDN".blue(), id.blue()),
-            TokenType::Number(num) => ("NUM".yellow(), format!("{}", num).yellow()),
+            TokenType::Key(num) => ("KEY".yellow(), format!("{}", num).yellow()),
             TokenType::Error(err) => ("ERR".red().bold(), format!("{:?}", err).red().bold()),
             TokenType::SimpleError => ("ERR".red().bold(), "ERR".red().bold()),
             TokenType::End => ("END".purple().bold(), "EOF".purple().bold()),
@@ -248,6 +248,6 @@ fn main() {
             format!("{:>2?}-{:>2?}:", x.from, x.to).truecolor(128, 128, 128),
             val
         );
-        // println!("{:?}", x);
+        if is_eof { break; }
     }
 }
