@@ -14,7 +14,6 @@ enum TokenType {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 struct Token {
     from: (usize, usize),
     to: (usize, usize),

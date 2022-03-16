@@ -1,4 +1,4 @@
 '1' '12'
 '\'' '\n' '\\'
 '\042f' as z for forw wfor za az
-forward9d forward
+forward9d forward '\042g'
