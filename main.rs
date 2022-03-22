@@ -1,4 +1,5 @@
 use colored::Colorize;
+use std::collections::HashMap;
 use std::env;
 use std::vec::Vec;
 
@@ -6,7 +7,7 @@ use std::vec::Vec;
 enum TokenType {
     Spaces(String),
     Symbol(char),
-    Identifier(String),
+    Identifier(usize),
     Key(String),
     Error(char),
     SimpleError,
@@ -29,9 +30,9 @@ struct SmartIterator {
 }
 
 #[derive(Debug)]
-struct Position{
-    ind: usize, 
-    pos: (usize, usize), 
+struct Position {
+    ind: usize,
+    pos: (usize, usize),
     prev_pos: (usize, usize),
 }
 
@@ -72,7 +73,11 @@ impl SmartIterator {
     }
 
     fn save_pos(&self) -> Position {
-        Position{ind: self.ind, pos: self.pos, prev_pos: self.prev_pos}
+        Position {
+            ind: self.ind,
+            pos: self.pos,
+            prev_pos: self.prev_pos,
+        }
     }
 
     fn load_pos(&mut self, a: Position) {
@@ -82,13 +87,18 @@ impl SmartIterator {
     }
 }
 
-struct ParseToken(SmartIterator);
+#[derive(Debug)]
+struct ParseToken(SmartIterator, HashMap<String, usize>);
 
 fn to_digit_16(d: char) -> Option<u32> {
     d.to_digit(16)
 }
 
 impl ParseToken {
+    fn new(iter: SmartIterator) -> Self {
+        Self(iter, HashMap::new())
+    }
+
     fn next_spaces(&mut self) -> TokenType {
         let mut ans = String::new();
         while let Some(s @ (' ' | '\t' | '\n')) = self.0.see() {
@@ -103,9 +113,7 @@ impl ParseToken {
             .zip(self.0.next().and_then(to_digit_16))
             .zip(self.0.next().and_then(to_digit_16))
             .zip(self.0.next().and_then(to_digit_16))
-            .and_then(|(((x1, x2), x3), x4)| {
-                char::from_u32(((x1 * 16 + x2) * 16 + x3) * 16 + x4)
-            })
+            .and_then(|(((x1, x2), x3), x4)| char::from_u32(((x1 * 16 + x2) * 16 + x3) * 16 + x4))
     }
 
     fn next_symbol(&mut self) -> TokenType {
@@ -158,11 +166,12 @@ impl ParseToken {
                     Some((save, ans)) if ans.eq("z") || ans.eq("for") || ans.eq("forward") => {
                         self.0.load_pos(save);
                         TokenType::Key(ans)
-                    },
+                    }
                     Some((save, ans)) if ans.len() >= 2 => {
                         self.0.load_pos(save);
-                        TokenType::Identifier(ans)
-                    },
+                        let len = self.1.len();
+                        TokenType::Identifier(*self.1.entry(ans).or_insert(len))
+                    }
                     _ => TokenType::SimpleError,
                 }
             } else {
@@ -230,23 +239,35 @@ fn main() {
     println!("content  = {:?}", content);
     println!();
 
-    for x in ParseToken(SmartIterator::new(content)) {
-        let is_eof = matches!(x.value, TokenType::End);
-        let (name, val) = match x.value {
-            TokenType::Spaces(sp) => ("SPA".white(), format!("{:?}", sp).white()),
-            TokenType::Symbol(str) => ("SYM".green(), format!("{:?}", str).green()),
-            TokenType::Identifier(id) => ("IDN".blue(), id.blue()),
-            TokenType::Key(num) => ("KEY".yellow(), format!("{}", num).yellow()),
-            TokenType::Error(err) => ("ERR".red().bold(), format!("{:?}", err).red().bold()),
-            TokenType::SimpleError => ("ERR".red().bold(), "ERR".red().bold()),
-            TokenType::End => ("END".purple().bold(), "EOF".purple().bold()),
-        };
-        println!(
-            "{} {} {}",
-            name,
-            format!("{:>2?}-{:>2?}:", x.from, x.to).truecolor(128, 128, 128),
-            val
-        );
-        if is_eof { break; }
+    let mut iter = ParseToken::new(SmartIterator::new(content));
+    loop {
+        match iter.next() {
+            Some(Token{value: TokenType::End, ..}) => {
+                for (key, value) in &iter.1 {
+                    println!("{:>10} - {}", key, value);
+                }
+                break;
+            }
+            Some(x) => {
+                let (name, val) = match x.value {
+                    TokenType::Spaces(sp) => ("SPA".white(), format!("{:?}", sp).white()),
+                    TokenType::Symbol(str) => ("SYM".green(), format!("{:?}", str).green()),
+                    TokenType::Identifier(id) => ("IDN".blue(), format!("{:?}", id).blue()),
+                    TokenType::Key(num) => ("KEY".yellow(), format!("{}", num).yellow()),
+                    TokenType::Error(err) => {
+                        ("ERR".red().bold(), format!("{:?}", err).red().bold())
+                    }
+                    TokenType::SimpleError => ("ERR".red().bold(), "ERR".red().bold()),
+                    TokenType::End => ("END".purple().bold(), "EOF".purple().bold()),
+                };
+                println!(
+                    "{} {} {}",
+                    name,
+                    format!("{:>2?}-{:>2?}:", x.from, x.to).truecolor(128, 128, 128),
+                    val
+                );
+            },
+            _ => break,
+        }
     }
 }
