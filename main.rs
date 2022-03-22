@@ -242,9 +242,13 @@ fn main() {
     let mut iter = ParseToken::new(SmartIterator::new(content));
     loop {
         match iter.next() {
-            Some(Token{value: TokenType::End, ..}) => {
+            Some(Token {
+                value: TokenType::End,
+                ..
+            }) => {
+                println!("HashMap IDN:");
                 for (key, value) in &iter.1 {
-                    println!("{:>10} - {}", key, value);
+                    println!("{:<20} : {}", key.blue(), format!("{:?}", value).blue());
                 }
                 break;
             }
@@ -266,7 +270,7 @@ fn main() {
                     format!("{:>2?}-{:>2?}:", x.from, x.to).truecolor(128, 128, 128),
                     val
                 );
-            },
+            }
             _ => break,
         }
     }
