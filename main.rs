@@ -94,6 +94,10 @@ fn to_digit_16(d: char) -> Option<u32> {
 	d.to_digit(16)
 }
 
+fn next_16((a, b): (u32, u32)) -> u32 {
+	a * 16 + b
+}
+
 impl ParseToken {
 	fn new(iter: SmartIterator) -> Self {
 		Self(iter, HashMap::new())
@@ -111,16 +115,18 @@ impl ParseToken {
 	fn next_number16_4(&mut self, x: char) -> Option<char> {
 		to_digit_16(x)
 			.zip(self.0.next().and_then(to_digit_16))
+			.map(next_16)
 			.zip(self.0.next().and_then(to_digit_16))
+			.map(next_16)
 			.zip(self.0.next().and_then(to_digit_16))
-			.and_then(|(((x1, x2), x3), x4)| char::from_u32(((x1 * 16 + x2) * 16 + x3) * 16 + x4))
+			.map(next_16)
+			.and_then(char::from_u32)
 	}
 
 	fn next_symbol(&mut self) -> TokenType {
 		if Some('\'') == self.0.next() {
 			if let Some(ans) = match self.0.next() {
-				Some('\'') => None,
-				Some('\n') => None,
+				Some('\'' | '\n') => None,
 				Some('\\') => match self.0.next() {
 					Some('n') => Some('\n'),
 					Some(x @ ('\'' | '\\')) => Some(x),
@@ -130,16 +136,11 @@ impl ParseToken {
 				x @ _ => x,
 			} {
 				if Some('\'') == self.0.next() {
-					TokenType::Symbol(ans)
-				} else {
-					TokenType::SimpleError
+					return TokenType::Symbol(ans);
 				}
-			} else {
-				TokenType::SimpleError
 			}
-		} else {
-			TokenType::SimpleError
 		}
+		TokenType::SimpleError
 	}
 
 	fn next_identifier_or_key(&mut self) -> TokenType {
@@ -162,7 +163,7 @@ impl ParseToken {
 						break;
 					}
 				}
-				match last_true_save {
+				return match last_true_save {
 					Some((save, ans)) if ans.eq("z") || ans.eq("for") || ans.eq("forward") => {
 						self.0.load_pos(save);
 						TokenType::Key(ans)
@@ -174,12 +175,9 @@ impl ParseToken {
 					}
 					_ => TokenType::SimpleError,
 				}
-			} else {
-				TokenType::SimpleError
 			}
-		} else {
-			TokenType::SimpleError
 		}
+		TokenType::SimpleError
 	}
 }
 
